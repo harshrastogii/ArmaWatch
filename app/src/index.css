@@ -1,0 +1,90 @@
+@import "tailwindcss";
+@import "maplibre-gl/dist/maplibre-gl.css";
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+:root {
+  --wp-accent: #d61f9a;
+  --wp-ink: #0f1419;
+  --wp-panel: rgba(15, 20, 25, 0.82);
+  --wp-line: rgba(255, 255, 255, 0.10);
+}
+
+.wp-weapons-map,
+.wp-weapons-map * {
+  font-family: 'Space Grotesk', system-ui, sans-serif;
+}
+.wp-mono { font-family: 'IBM Plex Mono', monospace; }
+
+.wp-panel {
+  background: var(--wp-panel);
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+  border: 1px solid var(--wp-line);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24);
+  color: #f5f5f4;
+}
+
+.wp-field {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--wp-line);
+  color: #f5f5f4;
+}
+.wp-field::placeholder { color: rgba(245, 245, 244, 0.45); }
+.wp-field:focus {
+  outline: none;
+  border-color: var(--wp-accent);
+  box-shadow: 0 0 0 2px rgba(214, 31, 154, 0.3);
+}
+.wp-field option { background: #0f1419; color: #f5f5f4; }
+
+.wp-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--wp-line);
+  color: #f5f5f4;
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+.wp-btn:hover { background: rgba(255, 255, 255, 0.12); }
+.wp-btn-active { background: var(--wp-accent); border-color: var(--wp-accent); color: #fff; }
+.wp-btn-active:hover { background: #e93aad; }
+
+.wp-chip {
+  font-size: 0.8rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: 9999px;
+  border: 1px solid rgba(15, 20, 25, 0.14);
+  background: rgba(15, 20, 25, 0.03);
+  color: var(--wp-ink);
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+.wp-chip:hover {
+  border-color: var(--wp-accent);
+  color: var(--wp-accent);
+  background: rgba(214, 31, 154, 0.06);
+}
+
+.wp-scroll::-webkit-scrollbar { width: 8px; }
+.wp-scroll::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.18); border-radius: 4px; }
+.wp-scroll::-webkit-scrollbar-track { background: transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* ---- responsive ---- */
+.wp-map-wrap { height: 620px; }
+.wp-map-canvas { height: 620px; }
+.wp-sidepanel { top: 0; right: 0; bottom: 0; width: 380px; max-width: 88%; border-radius: 0; }
+
+@media (max-width: 640px) {
+  .wp-map-wrap { height: 70vh; }
+  .wp-map-canvas { height: 70vh; }
+  .wp-analytics { display: none; }
+  /* side panel slides up from the bottom, full width */
+  .wp-sidepanel {
+    top: auto; right: 0; left: 0; bottom: 0;
+    width: 100%; max-width: 100%; max-height: 70%;
+    border-radius: 18px 18px 0 0;
+  }
+}
