@@ -219,3 +219,15 @@
 .wp-foot-credit { font-size: 12px; max-width: 640px; }
 .wp-foot-me { font-size: 12px; gap: 12px; }
 .wp-foot-me .wp-btn-active { padding: 6px 12px; font-size: 12px; }
+
+/* boxed map must have height even inside a plain div */
+.wp-weapons-map .maplibregl-map { position: absolute; inset: 0; }
+#thisisthemap, #root { min-height: 620px; }
+
+
+
+/* zoom buttons sit above the Street/Satellite toggle; attribution stays in its corner */
+.wp-weapons-map .maplibregl-ctrl-bottom-right .maplibregl-ctrl-group { margin-bottom: 52px; }
+
+/* hide map controls (zoom + attribution) when analytics view is active */
+.wp-hide-mapctrl .maplibregl-ctrl-bottom-right, .wp-hide-mapctrl .maplibregl-ctrl-bottom-left { display: none !important; }
