@@ -3,10 +3,15 @@ import maplibregl, { Map as MLMap, GeoJSONSource } from "maplibre-gl";
 import { AnimatePresence, motion } from "framer-motion";
 import type { Filters, SiteCollection, SiteFeature, SiteProps } from "../types";
 import { loadSites, uniqueSorted, PRIME } from "../lib/data";
-import type { FeatureCollection, Point } from "geojson";
+import AppHeader from "./AppHeader";
+import Ticker from "./Ticker";
+import AppFooter from "./AppFooter";
+import type { Point } from "geojson";
 
 const DATA_URL = "/data/weapons.geojson";
 const BASEMAP = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
+
+const SATELLITE = "https://api.maptiler.com/maps/hybrid/style.json?key=ArdcGJqknm37TVEzO4yP";
 const CENTER: [number, number] = [132, -28];
 const ZOOM = 3.4;
 const ACCENT = "#d61f9a";
@@ -20,6 +25,7 @@ export default function WeaponsMap() {
   const [ready, setReady] = useState(false);
   const [selected, setSelected] = useState<SiteProps | null>(null);
   const [nearby, setNearby] = useState<number | null>(null);
+  const [satellite, setSatellite] = useState(false);
   const [filters, setFilters] = useState<Filters>(() => {
     const q = new URLSearchParams(window.location.search).get("company") || "";
     return { facility: "", program: "", query: q };
@@ -76,14 +82,6 @@ export default function WeaponsMap() {
     });
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
     map.on("load", () => {
-      map.addSource("links", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-      map.addLayer({
-        id: "links",
-        type: "line",
-        source: "links",
-        layout: { "line-cap": "round" },
-        paint: { "line-color": ACCENT, "line-opacity": 0.55, "line-width": 1.5, "line-dasharray": [2, 1.5] },
-      });
       map.addSource("sites", {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },
@@ -151,6 +149,7 @@ export default function WeaponsMap() {
 
       mapRef.current = map;
       setReady(true);
+      requestAnimationFrame(() => map.resize());
     });
     return () => {
       map.remove();
@@ -164,6 +163,22 @@ export default function WeaponsMap() {
     if (src) src.setData({ type: "FeatureCollection", features: filtered });
   }, [filtered, ready]);
 
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    map.setStyle(satellite ? SATELLITE : BASEMAP);
+    const reAdd = () => {
+      if (map.getSource("sites")) return;
+      map.addSource("sites", { type: "geojson", data: { type: "FeatureCollection", features: filtered }, cluster: true, clusterRadius: 45, clusterMaxZoom: 11 });
+      map.addLayer({ id: "clusters", type: "circle", source: "sites", filter: ["has", "point_count"], paint: { "circle-color": ACCENT, "circle-opacity": 0.9, "circle-radius": ["step", ["get", "point_count"], 16, 10, 22, 30, 30], "circle-stroke-width": 2, "circle-stroke-color": "rgba(255,255,255,0.6)" } });
+      map.addLayer({ id: "cluster-count", type: "symbol", source: "sites", filter: ["has", "point_count"], layout: { "text-field": ["get", "point_count_abbreviated"], "text-size": 12 }, paint: { "text-color": "#ffffff" } });
+      map.addLayer({ id: "unclustered", type: "circle", source: "sites", filter: ["!", ["has", "point_count"]], paint: { "circle-color": ["match", ["get", "Program"], PRIME, ACCENT, OTHER], "circle-radius": 7, "circle-stroke-width": 2, "circle-stroke-color": "#ffffff" } });
+    };
+    map.on("styledata", reAdd);
+    return () => { map.off("styledata", reAdd); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [satellite, ready]);
+
   const flyToName = useCallback(
     (name: string) => {
       const matches = data?.features.filter((x) => x.properties.Name === name) ?? [];
@@ -174,7 +189,7 @@ export default function WeaponsMap() {
         mapRef.current.flyTo({ center: matches[0].geometry.coordinates as [number, number], zoom: 8, speed: 0.6 });
       } else {
         const b = new maplibregl.LngLatBounds();
-        matches.forEach((m) => b.extend(m.geometry.coordinates as [number, number]));
+        matches.forEach((mm) => b.extend(mm.geometry.coordinates as [number, number]));
         mapRef.current.fitBounds(b, { padding: 90, maxZoom: 8, duration: 800 });
       }
       const u = new URL(window.location.href);
@@ -242,224 +257,163 @@ export default function WeaponsMap() {
     return { program: by("Program") };
   }, [filtered]);
 
-  const linkData = useMemo<FeatureCollection>(() => {
-    if (!data || !selected) return { type: "FeatureCollection", features: [] };
-    const origin = data.features.find((f) => f.properties.Name === selected.Name);
-    if (!origin) return { type: "FeatureCollection", features: [] };
-    const peers = data.features.filter(
-      (f) => f.properties.Program === selected.Program && f.properties.Name !== selected.Name
-    );
-    return {
-      type: "FeatureCollection",
-      features: peers.map((peer) => ({
-        type: "Feature",
-        geometry: { type: "LineString", coordinates: [origin.geometry.coordinates, peer.geometry.coordinates] },
-        properties: {},
-      })),
-    };
-  }, [data, selected]);
-
-  useEffect(() => {
-    if (!ready || !mapRef.current) return;
-    const src = mapRef.current.getSource("links") as GeoJSONSource | undefined;
-    const visible = false;
-    if (src) src.setData(visible ? linkData : { type: "FeatureCollection", features: [] });
-  }, [linkData, selected, ready]);
-
   const totals = useMemo(() => {
     const states = new Set((data?.features ?? []).map((f) => String(f.properties.Postcode || "").charAt(0)));
     return { sites: data?.features.length ?? 0, primes: primes.length, states: states.size };
   }, [data, primes]);
 
   return (
-    <div className="wp-weapons-map w-full">
-      <div className="wp-mono text-xs opacity-70 mb-2 tracking-wide">
-        {totals.sites} sites · {totals.primes} prime contractors · {totals.states} states
-      </div>
-      <div className="relative w-full" style={{ height: 620 }}>
-        <div ref={containerRef} className="absolute inset-0 rounded-2xl overflow-hidden" style={{ height: 620 }} />
+    <div className="wp-app">
+      <AppHeader />
+      <Ticker />
 
-        <div className="wp-panel absolute left-3 top-3 z-10 flex flex-wrap items-center gap-2 p-2.5 rounded-2xl max-w-[calc(100%-1.5rem)]">
+      <div className="wp-app-body">
+        <aside className="wp-sidebar wp-scroll">
+          <p className="wp-side-lede">Every marker is a company helping build the weapons used in Gaza and West Papua. This is where they operate.</p>
+          <p className="wp-eyebrow-sm">Filter the record</p>
           <input
             aria-label="Search companies"
             placeholder="Search company…"
             value={filters.query}
             onChange={(e) => setFilters((s) => ({ ...s, query: e.target.value }))}
-            className="wp-field px-3 py-1.5 text-sm rounded-lg w-44"
+            className="wp-field w-full px-3 py-2 text-sm rounded-lg mb-2"
           />
           <select
             aria-label="Facility type"
             value={filters.facility}
             onChange={(e) => setFilters((s) => ({ ...s, facility: e.target.value }))}
-            className="wp-field px-3 py-1.5 text-sm rounded-lg"
+            className="wp-field w-full px-3 py-2 text-sm rounded-lg mb-2"
           >
             <option value="">All facilities</option>
-            {facilities.map((f) => (
-              <option key={f} value={f}>
-                {f}
-              </option>
-            ))}
+            {facilities.map((f) => <option key={f} value={f}>{f}</option>)}
           </select>
           <select
             aria-label="Program or group"
             value={filters.program}
             onChange={(e) => setFilters((s) => ({ ...s, program: e.target.value }))}
-            className="wp-field px-3 py-1.5 text-sm rounded-lg max-w-[220px]"
+            className="wp-field w-full px-3 py-2 text-sm rounded-lg mb-3"
           >
             <option value="">All programs</option>
-            {programs.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
+            {programs.map((pr) => <option key={pr} value={pr}>{pr}</option>)}
           </select>
-          <button onClick={goToMyLocation} className="wp-btn px-3 py-1.5 text-sm rounded-lg">
-            My location
-          </button>
-          <button onClick={resetView} className="wp-btn px-3 py-1.5 text-sm rounded-lg">
-            Reset
-          </button>
-          <button onClick={downloadCSV} className="wp-btn px-3 py-1.5 text-sm rounded-lg">
-            Download data
-          </button>
-          <span className="wp-mono px-1.5 text-xs self-center opacity-70">{filtered.length} sites</span>
-        </div>
 
-
-        {nearby !== null && (
-          <div className="wp-panel absolute left-1/2 z-30 px-4 py-2.5 rounded-full text-sm text-center" style={{ transform: "translateX(-50%)", bottom: 16 }}>
-            {nearby > 0
-              ? <><b style={{ color: ACCENT }}>{nearby}</b>{" weapons "}{nearby === 1 ? "site" : "sites"}{" within 25 km of you"}</>
-              : <>{"No sites within 25 km — but they operate across your state."}</>}
+          <div className="grid grid-cols-3 gap-2 mb-4">
+            <button onClick={goToMyLocation} className="wp-btn px-2 py-2 text-xs rounded-lg">My location</button>
+            <button onClick={downloadCSV} className="wp-btn px-2 py-2 text-xs rounded-lg">Download</button>
+            <button onClick={resetView} className="wp-btn px-2 py-2 text-xs rounded-lg">Reset</button>
           </div>
-        )}
 
-        <div className="wp-panel absolute left-3 bottom-3 z-10 p-3.5 rounded-2xl w-64 text-xs">
-          <p className="font-semibold mb-2.5 uppercase tracking-[0.14em] text-[10px] opacity-55">By program</p>
-          {stats.program.map(([label, n]) => {
-            const max = stats.program[0]?.[1] || 1;
-            return (
-              <div key={label} className="mb-2 last:mb-0">
-                <div className="flex justify-between items-baseline gap-2 mb-1">
-                  <span className="truncate">{label}</span>
-                  <span className="wp-mono opacity-80 shrink-0">{n}</span>
+          <div className="wp-side-stats">
+            <div><span className="wp-side-stat-num">{filtered.length}</span><span className="wp-side-stat-lbl">shown</span></div>
+            <div><span className="wp-side-stat-num">{totals.primes}</span><span className="wp-side-stat-lbl">primes</span></div>
+            <div><span className="wp-side-stat-num">{totals.states}</span><span className="wp-side-stat-lbl">states</span></div>
+          </div>
+
+          <div className="wp-side-block">
+            <p className="wp-eyebrow-sm">By program</p>
+            {stats.program.map(([label, n]) => {
+              const max = stats.program[0]?.[1] || 1;
+              return (
+                <div key={label} className="mb-2">
+                  <div className="flex justify-between items-baseline gap-2 mb-1 text-xs">
+                    <span className="truncate">{label}</span>
+                    <span className="wp-mono opacity-80 shrink-0">{n}</span>
+                  </div>
+                  <div className="h-1 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.08)" }}>
+                    <motion.div className="h-full rounded-full" style={{ background: ACCENT }}
+                      initial={{ width: 0 }} animate={{ width: `${(n / max) * 100}%` }} transition={{ duration: 0.5, ease: "easeOut" }} />
+                  </div>
                 </div>
-                <div className="h-1 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.08)" }}>
-                  <motion.div
-                    className="h-full rounded-full"
-                    style={{ background: ACCENT }}
-                    initial={{ width: 0 }}
-                    animate={{ width: `${(n / max) * 100}%` }}
-                    transition={{ duration: 0.5, ease: "easeOut" }}
-                  />
-                </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
 
-        <AnimatePresence>
-          {selected && (
-            <motion.aside
-              key={selected.Name}
-              initial={{ x: 380, opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              exit={{ x: 380, opacity: 0 }}
-              transition={{ type: "spring", stiffness: 260, damping: 30 }}
-              className="wp-panel wp-scroll absolute right-0 top-0 bottom-0 z-20 w-[380px] max-w-[88%] overflow-y-auto p-6 rounded-none"
-            >
-              <button
-                onClick={() => setSelected(null)}
-                aria-label="Close panel"
-                className="absolute right-4 top-4 opacity-50 hover:opacity-100 text-2xl leading-none"
-              >
-                ×
-              </button>
+          <div className="wp-side-block">
+            <p className="wp-eyebrow-sm">Prime contractors</p>
+            <div className="flex flex-wrap gap-1.5 mb-4">
+              {primes.map((n) => (
+                <button key={n} onClick={() => flyToName(n)} className="wp-chip wp-chip-dark"
+                  style={n === selected?.Name ? { background: ACCENT, borderColor: ACCENT, color: "#fff" } : undefined}>{n}</button>
+              ))}
+            </div>
+            <p className="wp-eyebrow-sm">Other companies</p>
+            <div className="flex flex-wrap gap-1.5">
+              {others.map((n) => (
+                <button key={n} onClick={() => flyToName(n)} className="wp-chip wp-chip-dark"
+                  style={n === selected?.Name ? { background: ACCENT, borderColor: ACCENT, color: "#fff" } : undefined}>{n}</button>
+              ))}
+            </div>
+          </div>
+        </aside>
 
-              <h3 className="text-xl font-semibold pr-8 leading-tight" style={{ color: ACCENT }}>
-                {selected.Name}
-              </h3>
+        <div className="wp-mapzone">
+          <div ref={containerRef} className="absolute inset-0" />
 
-              {selected.Program && (
-                <span
-                  className="wp-mono inline-block mt-3 px-2.5 py-1 text-[11px] rounded-full"
-                  style={{ background: "rgba(214,31,154,0.16)", color: "#f7a8dc" }}
-                >
-                  {selected.Program}
-                </span>
-              )}
+          <div className="wp-panel absolute left-3 top-3 z-10 flex rounded-lg overflow-hidden text-xs">
 
-              <a
-                href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                  [selected.Name, selected["Street Address"], selected.Suburb, selected.Postcode, "Australia"]
-                    .filter(Boolean)
-                    .join(", ")
-                )}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="wp-btn wp-btn-active flex items-center justify-center gap-2 mt-4 mb-5 px-3 py-2 text-sm rounded-lg font-medium"
-              >
-                View on Google Maps
-              </a>
+            <button onClick={() => setSatellite(false)} className={`px-3 py-1.5 ${!satellite ? "wp-btn-active" : ""}`}>Map</button>
 
-              <button
-                onClick={() => shareCompany(selected.Name)}
-                className="wp-btn w-full mb-5 px-3 py-2 text-sm rounded-lg"
-              >
-                Share this company
-              </button>
+            <button onClick={() => setSatellite(true)} className={`px-3 py-1.5 ${satellite ? "wp-btn-active" : ""}`}>Satellite</button>
 
-              <div className="mb-5 p-3 rounded-lg text-xs leading-relaxed" style={{ background: "rgba(214,31,154,0.12)", border: "1px solid rgba(214,31,154,0.3)" }}>
-                <b>Take action:</b> contact this company or your MP to demand they stop arming genocide. Email{" "}
-                <a href="mailto:info@wagepeaceau.org" className="underline" style={{ color: "#f7a8dc" }}>Wage Peace</a> to get involved.
-              </div>
+          </div>
 
-              <a
-                href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(
-                  `🚨 ${selected.Name} is helping arm genocide from right here in Australia.\n\nThese weapons companies operate in our backyard — and most people have no idea.\n\nSee who\'s on the map 👇\n#WagePeace #DisruptWar #StopArmingIsrael\n\n`
-                )}${encodeURIComponent(window.location.href)}`}
-                target="_blank" rel="noopener noreferrer"
-                className="wp-btn w-full mb-5 px-3 py-2 text-sm rounded-lg block text-center"
-              >
-                Spread the word
-              </a>
-
-              <dl className="text-sm space-y-4">
-                {selected.Facility && (
-                  <Row label="Facility">
-                    <span>{selected.Facility}</span>
-                  </Row>
-                )}
-                {(selected["Street Address"] || selected.Suburb) && (
-                  <Row label="Address">
-                    {[selected["Street Address"], selected.Suburb, selected.Postcode].filter(Boolean).join(", ")}
-                  </Row>
-                )}
-                {selected.Details && (
-                  <Row label="Details">
-                    <span className="whitespace-pre-line leading-relaxed">{selected.Details}</span>
-                  </Row>
-                )}
-                {selected.Source && (
-                  <Row label="Source">
-                    <a
-                      href={selected.Source}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="underline break-all"
-                      style={{ color: "#f7a8dc" }}
-                    >
-                      {selected.Source}
-                    </a>
-                  </Row>
-                )}
-              </dl>
-            </motion.aside>
+          {nearby !== null && (
+            <div className="wp-panel absolute left-1/2 z-30 px-4 py-2.5 rounded-full text-sm text-center" style={{ transform: "translateX(-50%)", bottom: 16 }}>
+              {nearby > 0
+                ? <><b style={{ color: ACCENT }}>{nearby}</b>{" weapons "}{nearby === 1 ? "site" : "sites"}{" within 25 km of you"}</>
+                : <>{"No sites within 25 km — but they operate across your state."}</>}
+            </div>
           )}
-        </AnimatePresence>
-      </div>
 
-      <CompanyLists primes={primes} others={others} onPick={flyToName} activeName={selected?.Name} />
+          <AnimatePresence>
+            {selected && (
+              <motion.aside
+                key={selected.Name}
+                initial={{ x: 400, opacity: 0 }}
+                animate={{ x: 0, opacity: 1 }}
+                exit={{ x: 400, opacity: 0 }}
+                transition={{ type: "spring", stiffness: 260, damping: 30 }}
+                className="wp-panel wp-scroll absolute right-0 top-0 bottom-0 z-20 w-[380px] max-w-[88%] overflow-y-auto p-6"
+              >
+                <button onClick={() => setSelected(null)} aria-label="Close panel"
+                  className="absolute right-4 top-4 opacity-50 hover:opacity-100 text-2xl leading-none">×</button>
+                <h3 className="text-xl font-semibold pr-8 leading-tight" style={{ color: ACCENT }}>{selected.Name}</h3>
+                {selected.Program && (
+                  <span className="wp-mono inline-block mt-3 px-2.5 py-1 text-[11px] rounded-full"
+                    style={{ background: "rgba(214,31,154,0.16)", color: "#f7a8dc" }}>{selected.Program}</span>
+                )}
+                <p className="wp-panel-lede">This site is part of the supply chain arming genocide. Its work doesn't stay in Australia.</p>
+                <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                    [selected.Name, selected["Street Address"], selected.Suburb, selected.Postcode, "Australia"].filter(Boolean).join(", ")
+                  )}`} target="_blank" rel="noopener noreferrer"
+                  className="wp-btn wp-btn-active flex items-center justify-center gap-2 mt-4 mb-3 px-3 py-2 text-sm rounded-lg font-medium">View on Google Maps</a>
+                <button onClick={() => shareCompany(selected.Name)} className="wp-btn w-full mb-3 px-3 py-2 text-sm rounded-lg">Share this company</button>
+                <div className="mb-3 p-3 rounded-lg text-xs leading-relaxed" style={{ background: "rgba(214,31,154,0.12)", border: "1px solid rgba(214,31,154,0.3)" }}>
+                  <b>Take action:</b> contact this company or your MP to demand they stop arming genocide. Email{" "}
+                  <a href="mailto:info@wagepeaceau.org" className="underline" style={{ color: "#f7a8dc" }}>Wage Peace</a> to get involved.
+                </div>
+                <a href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(
+                    `${selected.Name} is helping arm genocide from right here in Australia. These weapons companies operate in our backyard and most people have no idea. See who is on the map: #WagePeace #DisruptWar #StopArmingIsrael `
+                  )}${encodeURIComponent(window.location.href)}`} target="_blank" rel="noopener noreferrer"
+                  className="wp-btn w-full mb-5 px-3 py-2 text-sm rounded-lg block text-center">Spread the word</a>
+                <dl className="text-sm space-y-4">
+                  {selected.Facility && <Row label="Facility"><span>{selected.Facility}</span></Row>}
+                  {(selected["Street Address"] || selected.Suburb) && (
+                    <Row label="Address">{[selected["Street Address"], selected.Suburb, selected.Postcode].filter(Boolean).join(", ")}</Row>
+                  )}
+                  {selected.Details && <Row label="Details"><span className="whitespace-pre-line leading-relaxed">{selected.Details}</span></Row>}
+                  {selected.Source && (
+                    <Row label="Source">
+                      <a href={selected.Source} target="_blank" rel="noopener noreferrer" className="underline break-all" style={{ color: "#f7a8dc" }}>{selected.Source}</a>
+                    </Row>
+                  )}
+                </dl>
+              </motion.aside>
+            )}
+          </AnimatePresence>
+        </div>
+      </div>
+      <AppFooter />
     </div>
   );
 }
@@ -469,40 +423,6 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
     <div>
       <dt className="wp-mono text-[10px] uppercase tracking-[0.14em] opacity-50 mb-1">{label}</dt>
       <dd className="opacity-95">{children}</dd>
-    </div>
-  );
-}
-
-function CompanyLists({
-  primes,
-  others,
-  onPick,
-  activeName,
-}: {
-  primes: string[];
-  others: string[];
-  onPick: (n: string) => void;
-  activeName?: string;
-}) {
-  const chip = (n: string) => {
-    const active = n === activeName;
-    return (
-      <button
-        key={n}
-        onClick={() => onPick(n)}
-        className="wp-chip"
-        style={active ? { background: ACCENT, borderColor: ACCENT, color: "#fff" } : undefined}
-      >
-        {n}
-      </button>
-    );
-  };
-  return (
-    <div className="mt-6">
-      <p className="wp-mono text-[10px] uppercase tracking-[0.16em] opacity-55 mb-2">Prime contractors</p>
-      <div className="flex flex-wrap gap-2 mb-5">{primes.map(chip)}</div>
-      <p className="wp-mono text-[10px] uppercase tracking-[0.16em] opacity-55 mb-2">Other weapons companies</p>
-      <div className="flex flex-wrap gap-2">{others.map(chip)}</div>
     </div>
   );
 }
